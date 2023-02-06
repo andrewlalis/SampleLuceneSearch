@@ -14,22 +14,25 @@ import org.apache.lucene.store.FSDirectory;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Sample application that showcases the most basic way in which Apache Lucene
+ * can be used to index and search large datasets.
+ */
 public class SampleSearch {
 	public static void main(String[] args) throws IOException {
 		List<Airport> airports = AirportParser.parseAirports(Path.of("airports.csv"));
 		System.out.println("Read " + airports.size() + " airports.");
+
 		buildIndex(airports);
 		System.out.println("Built index.");
-		System.out.println("Entering search-cli mode. Type a query.");
+
+		System.out.println("Entering search-cli mode. Type a query. Type \"exit\" to quit.");
 		BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
 		String line;
 		while ((line = reader.readLine()) != null) {
@@ -44,17 +47,23 @@ public class SampleSearch {
 		System.out.println("Done!");
 	}
 
+	/**
+	 * Constructs an index from a list of airports.
+	 * @param airports The airports to index.
+	 * @throws IOException If an error occurs.
+	 */
 	public static void buildIndex(List<Airport> airports) throws IOException {
 		Path indexDir = Path.of("airports-index");
-		deleteDirRecursive(indexDir);
-		Files.createDirectories(indexDir);
-
+		// We use a try-with-resources block to prepare the components needed for writing the index.
 		try (
 			Analyzer analyzer = new StandardAnalyzer();
-			Directory luceneDir = FSDirectory.open(indexDir);
-			IndexWriter indexWriter = new IndexWriter(luceneDir, new IndexWriterConfig(analyzer))
+			Directory luceneDir = FSDirectory.open(indexDir)
 		) {
+			IndexWriterConfig config = new IndexWriterConfig(analyzer);
+			config.setOpenMode(IndexWriterConfig.OpenMode.CREATE);
+			IndexWriter indexWriter = new IndexWriter(luceneDir, config);
 			for (var airport : airports) {
+				// Create a new document for each airport.
 				Document doc = new Document();
 				doc.add(new StoredField("id", airport.id()));
 				doc.add(new TextField("ident", airport.ident(), Field.Store.YES));
@@ -68,11 +77,19 @@ public class SampleSearch {
 				if (airport.wikipediaLink().isPresent()) {
 					doc.add(new StoredField("wikipediaLink", airport.wikipediaLink().get()));
 				}
+				// And add it to the writer.
 				indexWriter.addDocument(doc);
 			}
+			indexWriter.close();
 		}
 	}
 
+	/**
+	 * Searches over an index to find the names of airports matching the given
+	 * textual query.
+	 * @param rawQuery The raw textual query entered by a human.
+	 * @return A list of airport names.
+	 */
 	public static List<String> searchAirports(String rawQuery) {
 		Path indexDir = Path.of("airports-index");
 		// If the query is empty or there's no index, quit right away.
@@ -91,6 +108,9 @@ public class SampleSearch {
 		BooleanQuery.Builder queryBuilder = new BooleanQuery.Builder();
 		String[] terms = rawQuery.toLowerCase().split("\\s+");
 		for (String term : terms) {
+			// Make the term into a wildcard term, where we match any field value starting with the given text.
+			// For example, "airp*" will match "airport" and "airplane", but not "airshow".
+			// This is usually the natural way in which people like to search.
 			String wildcardTerm = term + "*";
 			for (var entry : fieldWeights.entrySet()) {
 				String fieldName = entry.getKey();
@@ -116,27 +136,5 @@ public class SampleSearch {
 			e.printStackTrace();
 			return new ArrayList<>();
 		}
-	}
-
-	/**
-	 * Helper function that removes a directory and its contents recursively.
-	 * @param dir The directory to remove.
-	 * @throws IOException If an error occurs.
-	 */
-	private static void deleteDirRecursive(Path dir) throws IOException {
-		if (Files.notExists(dir)) return;
-		Files.walkFileTree(dir, new SimpleFileVisitor<>() {
-			@Override
-			public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-				Files.delete(file);
-				return FileVisitResult.CONTINUE;
-			}
-
-			@Override
-			public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-				Files.delete(dir);
-				return FileVisitResult.CONTINUE;
-			}
-		});
 	}
 }
